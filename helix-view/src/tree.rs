@@ -109,16 +109,6 @@ impl Tree {
         let focus = self.focus;
         let parent = self.nodes[focus].parent;
 
-        // Avoid multiple children
-        match &self.nodes[parent].content {
-            Content::Container(container) => {
-                if container.children.len() >= 2 {
-                    return focus
-                }
-            }
-            _ => {}
-        }
-
         let mut node = Node::view(view);
         node.parent = parent;
         let node = self.nodes.insert(node);
@@ -170,30 +160,23 @@ impl Tree {
             _ => unreachable!(),
         };
 
-        
-        let mut did_split = false;
+        let n_parent_children = container.children.len();
 
-        if container.layout == layout {
-            // insert node after the current item if there is children already
-            let pos = if container.children.is_empty() {
+        let split_parent_container = n_parent_children < 2;
+
+        if split_parent_container {
+
+            let pos = if n_parent_children == 0 {
                 0
             } else {
-                let pos = container
-                    .children
-                    .iter()
-                    .position(|&child| child == focus)
-                    .unwrap();
-                pos + 1
+                1
             };
 
-            if pos <= 1 {
-                container.children.insert(pos, node);
-                self.nodes[node].parent = parent;
-                did_split = true
-            }
-        }
+            container.children.insert(pos, node);
+            self.nodes[node].parent = parent;
 
-        if !did_split {
+        } else {
+
             let mut split = Node::container(layout);
             split.parent = parent;
             let split = self.nodes.insert(split);
@@ -205,6 +188,7 @@ impl Tree {
                 } => container,
                 _ => unreachable!(),
             };
+
             container.children.push(focus);
             container.children.push(node);
             self.nodes[focus].parent = split;
@@ -226,7 +210,9 @@ impl Tree {
 
             // replace focus on parent with split
             container.children[pos] = split;
+
         }
+
 
         // focus the new node
         self.focus = node;
