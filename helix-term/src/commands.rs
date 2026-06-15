@@ -616,6 +616,10 @@ impl MappableCommand {
         goto_prev_tabstop, "Goto next snippet placeholder",
         rotate_selections_first, "Make the first selection your primary one",
         rotate_selections_last, "Make the last selection your primary one",
+        adjust_panel_left, "Adjust size of panels",
+        adjust_panel_right, "Adjust size of panels",
+        adjust_panel_up, "Adjust size of panels",
+        adjust_panel_down, "Adjust size of panels",
     );
 }
 
@@ -7194,4 +7198,24 @@ fn lsp_or_syntax_workspace_symbol_picker(cx: &mut Context) {
     } else {
         syntax_workspace_symbol_picker(cx);
     }
+}
+
+fn adjust_panel_left(cx: &mut Context) {
+    let (view, _) = current_ref!(cx.editor);
+    cx.editor.tree.adjust_view_size(view.id, crate::helix_view::tree::Direction::Left);
+}
+
+fn adjust_panel_right(cx: &mut Context) {
+    let (view, _) = current_ref!(cx.editor);
+    cx.editor.tree.adjust_view_size(view.id, crate::helix_view::tree::Direction::Right);
+}
+
+fn adjust_panel_up(cx: &mut Context) {
+    let (view, _) = current_ref!(cx.editor);
+    cx.editor.tree.adjust_view_size(view.id, crate::helix_view::tree::Direction::Up);
+}
+
+fn adjust_panel_down(cx: &mut Context) {
+    let (view, _) = current_ref!(cx.editor);
+    cx.editor.tree.adjust_view_size(view.id, crate::helix_view::tree::Direction::Down);
 }

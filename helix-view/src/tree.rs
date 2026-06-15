@@ -65,6 +65,7 @@ pub struct Container {
     layout: Layout,
     children: Vec<ViewId>,
     area: Rect,
+    split_ratio: f32,
 }
 
 impl Container {
@@ -73,6 +74,7 @@ impl Container {
             layout,
             children: Vec::new(),
             area: Rect::default(),
+            split_ratio: 1.0,
         }
     }
 }
@@ -106,6 +108,17 @@ impl Tree {
     pub fn insert(&mut self, view: View) -> ViewId {
         let focus = self.focus;
         let parent = self.nodes[focus].parent;
+
+        // Avoid multiple children
+        match &self.nodes[parent].content {
+            Content::Container(container) => {
+                if container.children.len() >= 2 {
+                    return focus
+                }
+            }
+            _ => {}
+        }
+
         let mut node = Node::view(view);
         node.parent = parent;
         let node = self.nodes.insert(node);
@@ -156,6 +169,10 @@ impl Tree {
             } => container,
             _ => unreachable!(),
         };
+
+        
+        let mut did_split = false;
+
         if container.layout == layout {
             // insert node after the current item if there is children already
             let pos = if container.children.is_empty() {
@@ -168,9 +185,15 @@ impl Tree {
                     .unwrap();
                 pos + 1
             };
-            container.children.insert(pos, node);
-            self.nodes[node].parent = parent;
-        } else {
+
+            if pos <= 1 {
+                container.children.insert(pos, node);
+                self.nodes[node].parent = parent;
+                did_split = true
+            }
+        }
+
+        if !did_split {
             let mut split = Node::container(layout);
             split.parent = parent;
             let split = self.nodes.insert(split);
@@ -379,27 +402,47 @@ impl Tree {
                     // debug!!("setting container area {:?}", area);
                     container.area = area;
 
+                    if container.children.len() > 2 {
+                        panic!("Container has too many children")
+                    }
+
                     match container.layout {
                         Layout::Horizontal => {
                             let len = container.children.len();
 
-                            let height = area.height / len as u16;
+
+                            let is_split: bool = len >= 2;
+
+                            // Divide height if split, base_height is height when split_ratio is 100 %
+                            let base_height = if is_split {
+                                area.height / len as u16
+                            } else {    
+                                area.height
+                            };
 
                             let mut child_y = area.y;
 
+                            let first_child_height = (base_height as f32 * container.split_ratio) as u16; 
+
                             for (i, child) in container.children.iter().enumerate() {
+                                let child_height = if i == 0 {
+                                    first_child_height
+                                } else {
+                                    area.height - first_child_height
+                                };
+
                                 let mut area = Rect::new(
                                     container.area.x,
                                     child_y,
                                     container.area.width,
-                                    height,
+                                    child_height,
                                 );
-                                child_y += height;
+                                child_y += child_height;
 
                                 // last child takes the remaining width because we can get uneven
                                 // space from rounding
                                 if i == len - 1 {
-                                    area.height = container.area.y + container.area.height - area.y;
+                                    //area.height = container.area.y + container.area.height - area.y;
                                 }
 
                                 self.stack.push((*child, area));
@@ -407,29 +450,45 @@ impl Tree {
                         }
                         Layout::Vertical => {
                             let len = container.children.len();
+                            let is_split = len >= 2;
                             let len_u16 = len as u16;
 
                             let inner_gap = 1u16;
                             let total_gap = inner_gap * len_u16.saturating_sub(2);
 
                             let used_area = area.width.saturating_sub(total_gap);
-                            let width = used_area / len_u16;
+
+                            // Divide width if split, base_width is width when split_ratio is 100%
+                            let base_width = if is_split {
+                                used_area / len_u16
+                            } else {    
+                                used_area
+                            };
+
+                            let first_child_width = (base_width as f32 * container.split_ratio) as u16; 
 
                             let mut child_x = area.x;
 
                             for (i, child) in container.children.iter().enumerate() {
+
+                                let child_width = if i == 0 {
+                                    first_child_width
+                                } else {
+                                    base_width.saturating_sub(first_child_width)
+                                };
+    
                                 let mut area = Rect::new(
                                     child_x,
                                     container.area.y,
-                                    width,
+                                    child_width,
                                     container.area.height,
                                 );
-                                child_x += width + inner_gap;
+                                child_x += child_width + inner_gap;
 
                                 // last child takes the remaining width because we can get uneven
                                 // space from rounding
                                 if i == len - 1 {
-                                    area.width = container.area.x + container.area.width - area.x;
+                                  area.width = (container.area.x + container.area.width).saturating_sub(area.x);
                                 }
 
                                 self.stack.push((*child, area));
@@ -669,7 +728,76 @@ impl Tree {
     pub fn area(&self) -> Rect {
         self.area
     }
+
+    pub fn adjust_view_size(&mut self, view_id: ViewId, direction: Direction) {
+      
+        let layout = match direction {
+            Direction::Left | Direction::Right => Layout::Vertical,
+            Direction::Up | Direction::Down => Layout::Horizontal,
+        };
+
+        // Whether to increase or decrease ratio...
+        let signum = match direction {
+            Direction::Left | Direction::Up => -1.0,
+            Direction::Right | Direction::Down => 1.0,
+        };
+
+        // need to when finding the nearest view to adjust, return also whether we belong to the first or second
+        // of the split...
+
+        let view_to_adjust = match self.find_nearest_parent_with_layout(view_id, layout) {
+            Some(id) => &mut self.nodes[id],
+            None => return, // nothing to adjust
+        };
+
+        if let Content::Container(container) = &mut view_to_adjust.content {
+            container.split_ratio += 0.1_f32 * signum;
+            container.split_ratio = container.split_ratio.clamp(0.2, 1.8)
+        } else {
+            return; // or just ignore if it's not a container
+        }
+        
+        self.recalculate();
+    }
+
+    fn find_nearest_parent_with_layout(&mut self, view_id: ViewId, layout: Layout) -> Option<ViewId> {
+        let mut current = self.nodes[view_id].parent;
+
+        loop {
+            let node = &self.nodes[current];
+            
+            match &node.content {
+                Content::Container(container) => {
+                    if container.layout == layout {
+                        return Some(current)
+                    }
+                }
+                _ => {}
+            }
+
+            current = node.parent;
+
+            if current == self.root {
+                let root_node = &self.nodes[current];
+
+                match &root_node.content {
+                    Content::Container(container) => {
+                        if container.layout == layout {
+                            return Some(current)
+                        }
+                    },
+                    _ => {}
+                }
+
+               
+                return None;
+            };
+        }
+
+    }
+    
 }
+
 
 #[derive(Debug)]
 pub struct Traverse<'a> {
